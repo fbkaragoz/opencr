@@ -29,9 +29,9 @@ docker compose up -d
 
 Open http://localhost:39672. Drop PDFs in `./input/`, hit **Start OCR run**.
 
-### Option 2 — Apple Silicon / CPU (in-process inference, no GPU needed)
+### Option 2 — Local process inference (default local setup)
 
-For local development, demos, and small jobs on a Mac or Linux box with no GPU.
+For local development, demos, and small jobs on a single machine.
 
 ```bash
 git clone https://github.com/cdliai/opencr.git
@@ -41,9 +41,46 @@ pip install -r ocr_pipeline/requirements.txt -r requirements-local.txt
 MODEL_BACKEND=local ./scripts/start.sh
 ```
 
+### Option 2b — Linux/Windows with NVIDIA GPU (local in-process inference)
+
+For local in-process inference on GPU, install CUDA-matched PyTorch first (do **not**
+install the default CUDA wheels if your driver stack is not matching):
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -U pip
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+pip install -r ocr_pipeline/requirements.txt -r requirements-local.txt
+MODEL_BACKEND=local LOCAL_DEVICE=cuda ./scripts/start.sh
+```
+
+Then verify CUDA is visible before processing:
+
+```bash
+python - <<'PY'
+import torch
+print("torch:", torch.__version__)
+print("cuda:", torch.version.cuda, "available:", torch.cuda.is_available())
+print("device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none")
+PY
+```
+
+### Run with explicit backend
+
+```bash
+# Explicit local CPU run
+LOCAL_DEVICE=cpu MODEL_BACKEND=local ./scripts/start.sh
+
+# Explicit local CUDA run
+LOCAL_DEVICE=cuda MODEL_BACKEND=local ./scripts/start.sh
+
+# Remote backend (model server at MODEL_SERVER_URL)
+MODEL_BACKEND=remote MODEL_SERVER_URL=https://your-endpoint MODEL_API_KEY=sk-... ./scripts/start.sh
+```
+
 Open http://localhost:39672. The DeepSeek-OCR model (~6 GB) downloads 
-on first request and runs in-process via `transformers` on MPS (Apple Silicon) 
-or CPU. Expect **5–30 seconds per page on M-series, much slower on CPU** — 
+on first request and runs in-process via `transformers` on CPU, MPS (Apple Silicon),
+or CUDA (if available). Expect **5–30 seconds per page on M-series, much slower on CPU** — 
 fine for development, not for production batch jobs.
 
 ### Option 3 — Remote model server (point at any OpenAI-compatible endpoint)

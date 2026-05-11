@@ -2,11 +2,16 @@
 # Only needed when MODEL_BACKEND=local. Install on top of the base requirements:
 #   pip install -r ocr_pipeline/requirements.txt -r requirements-local.txt
 #
-# `torch` here is the CPU/MPS build. On NVIDIA boxes prefer the official
-# CUDA-matched wheels from https://pytorch.org/ instead of letting pip pick.
+# `torch` here is the local backend runtime dependency.
+# On NVIDIA boxes, install CUDA-matched wheels from https://pytorch.org
+# (not your distro default if that conflicts with the driver stack).
 torch>=2.4.0
 torchvision>=0.19.0
 transformers>=4.46.0
 accelerate>=0.34.0
 einops>=0.8.0
 sentencepiece>=0.2.0
+# DeepSeek-OCR's remote code path imports these at load time when
+# running in local/transformers mode.
+addict>=2.4.0
+matplotlib>=3.8.0
