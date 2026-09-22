@@ -97,10 +97,10 @@
       <header class="stage-header">
         <div>
           <h2>Documents</h2>
-          <p class="stage-sub">Select PDFs, edit metadata, then run extraction.</p>
+          <p class="stage-sub">Select documents, edit metadata, then run extraction.</p>
         </div>
         <div class="stage-actions">
-          <button class="btn btn-ghost btn-sm" @click="$refs.fileInput.click()">Upload PDFs</button>
+          <button class="btn btn-ghost btn-sm" @click="$refs.fileInput.click()">Upload files</button>
           <button class="btn btn-primary btn-sm"
                   :disabled="selectedDocumentIds.length === 0 || creating"
                   @click="startDocumentsRun">
@@ -110,7 +110,7 @@
         </div>
       </header>
 
-      <input type="file" accept=".pdf" multiple x-ref="fileInput" hidden @change="handleFileSelect($event)">
+      <input type="file" accept=".pdf,.epub" multiple x-ref="fileInput" hidden @change="handleFileSelect($event)">
 
       <div class="document-workbench-body">
         <section class="document-library">
@@ -184,7 +184,7 @@
               </div>
             </template>
           </div>
-          <p class="empty-note" x-show="documents.length === 0">No PDFs yet. Upload PDFs to start the catalog.</p>
+          <p class="empty-note" x-show="documents.length === 0">No documents yet. Upload files to start the catalog.</p>
         </section>
 
         <aside class="document-editor" x-show="selectedDocumentId">

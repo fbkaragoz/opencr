@@ -9,6 +9,7 @@ from typing import Awaitable, Callable
 from ocr_pipeline.config import settings
 from ocr_pipeline.models.metadata import DocumentMetadata, PageMetadata
 from ocr_pipeline.services.db import Database
+from ocr_pipeline.services.epub_parser import EpubParser
 from ocr_pipeline.services.metadata_collector import MetadataCollector
 from ocr_pipeline.services.ocr_engine import OCREngine
 from ocr_pipeline.services.output_validator import OutputValidator, ValidationStatus
@@ -191,6 +192,16 @@ class BatchProcessor:
         filename: str | None = None,
         artifact_paths: ArtifactPaths,
     ) -> DocumentMetadata:
+        if pdf_path.suffix.lower() == ".epub":
+            return await self.process_epub_document(
+                pdf_path,
+                run_id=run_id,
+                document_id=document_id,
+                file_sha256=file_sha256,
+                filename=filename,
+                artifact_paths=artifact_paths,
+            )
+
         filename = filename or pdf_path.name
         file_size = (await asyncio.to_thread(pdf_path.stat)).st_size
         started_at = datetime.now(timezone.utc).isoformat()
@@ -248,6 +259,178 @@ class BatchProcessor:
             completed_at=completed_at,
             pipeline_version=settings.pipeline_version,
             model_used=settings.model_name,
+            pages=pages_meta,
+        )
+
+        await asyncio.to_thread(
+            self.writer.write_all,
+            artifact_paths, raw_pages, clean_pages, pages_meta, pages_script, doc_metadata,
+        )
+
+        await self.db.update_run_document(
+            run_id, document_id,
+            status="completed",
+            pages_pass=doc_metadata.pages_pass,
+            pages_warn=doc_metadata.pages_warn,
+            pages_fail=doc_metadata.pages_fail,
+            pages_empty=doc_metadata.pages_empty,
+            total_processing_time_ms=doc_metadata.total_processing_time_ms,
+            total_tokens_cl100k=doc_metadata.total_tokens_cl100k,
+            dominant_script=doc_metadata.dominant_script,
+            dominant_direction=doc_metadata.dominant_direction,
+            languages_detected=json.dumps(all_langs, ensure_ascii=False),
+            artifact_raw_txt=str(artifact_paths.raw_txt),
+            artifact_clean_txt=str(artifact_paths.clean_txt),
+            artifact_markdown=str(artifact_paths.markdown),
+            artifact_meta_json=str(artifact_paths.meta_json),
+            artifact_source_pdf=str(artifact_paths.source_pdf),
+            completed_at=completed_at,
+        )
+
+        await self._emit({
+            "type": "document_complete",
+            "document": filename,
+            "document_id": document_id,
+            "total_pages": total_pages,
+            "pages_pass": doc_metadata.pages_pass,
+            "pages_warn": doc_metadata.pages_warn,
+            "pages_fail": doc_metadata.pages_fail,
+            "total_time_ms": doc_metadata.total_processing_time_ms,
+            "output_path": str(artifact_paths.markdown),
+        })
+        return doc_metadata
+
+    async def process_epub_document(
+        self,
+        epub_path: Path,
+        *,
+        run_id: str,
+        document_id: str,
+        file_sha256: str,
+        filename: str | None = None,
+        artifact_paths: ArtifactPaths,
+    ) -> DocumentMetadata:
+        filename = filename or epub_path.name
+        file_size = (await asyncio.to_thread(epub_path.stat)).st_size
+        started_at = datetime.now(timezone.utc).isoformat()
+        epub_doc = await asyncio.to_thread(EpubParser().parse, epub_path)
+        total_pages = len(epub_doc.sections)
+
+        await self.db.update_run_document(
+            run_id, document_id,
+            status="processing", total_pages=total_pages, started_at=started_at,
+        )
+
+        raw_pages: list[str] = []
+        clean_pages: list[str] = []
+        pages_meta: list[PageMetadata] = []
+        pages_script: list[ScriptAnalysis] = []
+        page_times: list[float] = []
+
+        for section in epub_doc.sections:
+            await self._emit({
+                "type": "page_start",
+                "document": filename,
+                "document_id": document_id,
+                "page": section.index,
+                "total_pages": total_pages,
+                "dpi": 0,
+                "mode": "epub_text",
+            })
+            t0 = time.perf_counter()
+            raw_text = section.text
+            clean_text = self.cleaner.clean(raw_text, strip_refs=self.strip_refs)
+            processing_ms = (time.perf_counter() - t0) * 1000
+            validation = self.validator.validate(clean_text, section.index)
+            script_analysis = self.script_detector.analyze_text(clean_text)
+            profile = PageProfile(
+                page_num=section.index,
+                has_embedded_text=True,
+                embedded_text_length=len(raw_text),
+                has_images=False,
+                image_count=0,
+                width=0,
+                height=0,
+                is_landscape=False,
+                estimated_complexity="epub",
+                recommended_dpi=0,
+                recommended_mode="epub_text",
+            )
+            page_meta = self.metadata_collector.build_page_metadata(
+                page_num=section.index,
+                text=clean_text,
+                processing_time_ms=processing_ms,
+                mode="epub_text",
+                attempt=1,
+                dpi=0,
+                script_analysis=script_analysis,
+                validation_result=validation,
+                page_profile=profile,
+            )
+
+            db_fields = {f: getattr(page_meta, f) for f in PAGE_DB_FIELDS}
+            await self.db.upsert_page(
+                run_id, document_id, section.index,
+                status=page_meta.validation_status,
+                processing_time_ms=processing_ms,
+                **db_fields,
+            )
+
+            await self._emit({
+                "type": "page_complete",
+                "document": filename,
+                "document_id": document_id,
+                "page": section.index,
+                "total_pages": total_pages,
+                "processing_time_ms": round(processing_ms, 1),
+                "validation_status": validation.status.value,
+                "script_direction": script_analysis.direction.value,
+                "primary_script": script_analysis.primary_script.value,
+                "text_length": len(clean_text),
+                "token_count": page_meta.token_count_cl100k,
+            })
+            raw_pages.append(raw_text)
+            clean_pages.append(clean_text)
+            pages_meta.append(page_meta)
+            pages_script.append(script_analysis)
+            page_times.append(processing_ms)
+
+        total_processing_ms = sum(page_times)
+        completed_at = datetime.now(timezone.utc).isoformat()
+        status_counts = Counter(m.validation_status for m in pages_meta)
+        direction_counts = Counter(m.script_direction for m in pages_meta)
+        script_counts = Counter(m.primary_script for m in pages_meta)
+        all_langs = sorted({lang for m in pages_meta for lang in m.detected_languages})
+
+        doc_metadata = DocumentMetadata(
+            filename=filename,
+            file_path=str(epub_path),
+            file_size_bytes=file_size,
+            file_sha256=file_sha256,
+            total_pages=total_pages,
+            pdf_title=epub_doc.title,
+            pdf_author=", ".join(epub_doc.creators) if epub_doc.creators else None,
+            pdf_creation_date=None,
+            pdf_producer="EPUB direct text extraction",
+            total_chars=sum(m.text_length_chars for m in pages_meta),
+            total_words=sum(m.text_length_words for m in pages_meta),
+            total_tokens_cl100k=sum(m.token_count_cl100k for m in pages_meta),
+            total_processing_time_ms=round(total_processing_ms, 1),
+            avg_time_per_page_ms=round(total_processing_ms / total_pages, 1) if total_pages else 0,
+            dominant_direction=(direction_counts.most_common(1) or [(ScriptDirection.LTR.value, 0)])[0][0],
+            dominant_script=(script_counts.most_common(1) or [("unknown", 0)])[0][0],
+            pages_ltr=direction_counts.get(ScriptDirection.LTR.value, 0),
+            pages_rtl=direction_counts.get(ScriptDirection.RTL.value, 0),
+            pages_mixed=direction_counts.get(ScriptDirection.MIXED.value, 0),
+            languages_detected=all_langs,
+            pages_pass=status_counts.get(ValidationStatus.PASS.value, 0),
+            pages_warn=status_counts.get(ValidationStatus.WARN.value, 0),
+            pages_fail=status_counts.get(ValidationStatus.FAIL.value, 0),
+            pages_empty=status_counts.get(ValidationStatus.EMPTY.value, 0),
+            started_at=started_at,
+            completed_at=completed_at,
+            pipeline_version=settings.pipeline_version,
+            model_used="epub-direct-text",
             pages=pages_meta,
         )
 

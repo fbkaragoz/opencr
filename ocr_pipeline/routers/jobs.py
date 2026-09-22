@@ -28,6 +28,8 @@ async def create_job(request: JobRequest):
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     orchestrator.start(
         result,

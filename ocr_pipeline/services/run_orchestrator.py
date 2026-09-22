@@ -14,6 +14,8 @@ from ocr_pipeline.config import settings
 from ocr_pipeline.services.batch_processor import BatchProcessor
 from ocr_pipeline.services.dataset_exporter import DatasetExporter, DocumentExport
 from ocr_pipeline.services.db import Database
+from ocr_pipeline.services.document_catalog import SUPPORTED_SOURCE_SUFFIXES
+from ocr_pipeline.services.epub_parser import EpubParser
 from ocr_pipeline.services.observability import observability
 from ocr_pipeline.services.run_storage import RunStorage
 
@@ -62,17 +64,23 @@ class RunOrchestrator:
         return digest.hexdigest()
 
     @staticmethod
-    def _count_pages(pdf_path: Path) -> int:
-        with fitz.open(str(pdf_path)) as doc:
+    def _count_pages(document_path: Path) -> int:
+        if document_path.suffix.lower() == ".epub":
+            return EpubParser().count_sections(document_path)
+        with fitz.open(str(document_path)) as doc:
             return len(doc)
 
     async def _stage_document(self, file_path: Path) -> StagedDocument:
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
+        suffix = file_path.suffix.lower()
+        if suffix not in SUPPORTED_SOURCE_SUFFIXES:
+            supported = ", ".join(sorted(SUPPORTED_SOURCE_SUFFIXES))
+            raise ValueError(f"Unsupported file type: {suffix or '(none)'}; expected {supported}")
 
         sha = await asyncio.to_thread(self._hash_file_sync, file_path)
         document_id = sha[:16]
-        canonical = self.storage.source_pdf_path(document_id)
+        canonical = self.storage.source_document_path(document_id, suffix)
         existing = await self.db.get_document_by_sha(sha)
         filename = existing["filename"] if existing else file_path.name
 

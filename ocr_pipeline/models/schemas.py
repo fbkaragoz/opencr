@@ -3,9 +3,9 @@ from typing import Optional
 
 
 class ExtractRequest(BaseModel):
-    """Single PDF extraction request."""
+    """Single document extraction request."""
 
-    file_path: str = Field(description="Path to the PDF file")
+    file_path: str = Field(description="Path to the PDF or EPUB file")
     output_dir: Optional[str] = Field(
         None, description="Output directory override (deprecated)"
     )
@@ -39,7 +39,7 @@ class ExtractResponse(BaseModel):
 class JobRequest(BaseModel):
     """Batch extraction job request (compatibility wrapper around runs)."""
 
-    file_paths: list[str] = Field(description="List of PDF file paths to process")
+    file_paths: list[str] = Field(description="List of PDF/EPUB file paths to process")
     output_dir: Optional[str] = Field(
         None, description="Output directory override (deprecated)"
     )
@@ -140,7 +140,7 @@ class StagedDocumentInfo(BaseModel):
 
 
 class RunCreateRequest(BaseModel):
-    file_paths: list[str] = Field(description="PDF file paths to enqueue")
+    file_paths: list[str] = Field(description="PDF/EPUB file paths to enqueue")
     name: Optional[str] = None
     strip_refs: bool = False
     export_parquet: bool = True

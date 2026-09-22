@@ -4,6 +4,7 @@ from pathlib import Path
 import ocr_pipeline.main as main_module
 from ocr_pipeline.config import settings
 from ocr_pipeline.services.startup import model_readiness
+from tests.test_epub_parser import write_minimal_epub
 
 
 def test_upload_and_list_input(tmp_path, monkeypatch):
@@ -111,6 +112,52 @@ def test_duplicate_upload_filenames_keep_distinct_source_paths(tmp_path, monkeyp
 
         docs = client.get("/api/documents").json()
         assert len({doc["source_path"] for doc in docs}) == 2
+
+
+def test_upload_and_list_epub_input(tmp_path, monkeypatch):
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    runs_dir = output_dir / "runs"
+    db_path = output_dir / "opencr.sqlite"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    epub_path = tmp_path / "sample.epub"
+    write_minimal_epub(epub_path)
+
+    async def fake_wait_for_model_server():
+        model_readiness.ready = True
+        return True
+
+    monkeypatch.setattr(settings, "input_dir", input_dir)
+    monkeypatch.setattr(settings, "output_dir", output_dir)
+    monkeypatch.setattr(settings, "runs_dir", runs_dir)
+    monkeypatch.setattr(settings, "db_path", db_path)
+    monkeypatch.setattr(
+        main_module, "wait_for_model_server", fake_wait_for_model_server
+    )
+    model_readiness.ready = True
+
+    with TestClient(main_module.app) as client:
+        resp = client.post(
+            "/api/upload",
+            files={
+                "file": (
+                    "sample.epub",
+                    epub_path.read_bytes(),
+                    "application/epub+zip",
+                )
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["filename"] == "sample.epub"
+
+        listing = client.get("/api/files/input")
+        assert listing.status_code == 200
+        assert any(item["name"] == "sample.epub" for item in listing.json())
+
+        docs = client.get("/api/documents").json()
+        epub_doc = next(doc for doc in docs if doc["filename"] == "sample.epub")
+        assert epub_doc["total_pages"] == 2
 
 
 def test_runs_list_empty_when_no_runs(tmp_path, monkeypatch):

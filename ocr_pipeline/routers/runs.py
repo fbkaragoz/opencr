@@ -49,7 +49,7 @@ ARTIFACT_FIELDS = {
     "txt": ("artifact_clean_txt", "text/plain"),
     "md": ("artifact_markdown", "text/markdown"),
     "meta": ("artifact_meta_json", "application/json"),
-    "source": ("artifact_source_pdf", "application/pdf"),
+    "source": ("artifact_source_pdf", None),
 }
 TEXT_MODES = {
     "raw": "artifact_raw_txt",
@@ -189,6 +189,8 @@ async def create_run(request: RunCreateRequest):
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     orchestrator.start(
         result, strip_refs=request.strip_refs, export_parquet=request.export_parquet
@@ -302,6 +304,12 @@ async def download_artifact(artifact: str, run_id: str = ID, document_id: str = 
         raise HTTPException(status_code=400, detail="Unsupported artifact")
     field, media_type = ARTIFACT_FIELDS[artifact]
     path = _existing_path(await _require_doc(run_id, document_id), field)
+    if artifact == "source":
+        media_type = (
+            "application/epub+zip"
+            if path.suffix.lower() == ".epub"
+            else "application/pdf"
+        )
     return FileResponse(path, media_type=media_type, filename=path.name)
 
 
@@ -315,6 +323,8 @@ async def render_page_image(
     rd = await _require_doc(run_id, document_id)
     pdf_path_str = rd.get("artifact_source_pdf") or rd.get("document_source_path")
     if not pdf_path_str or not Path(pdf_path_str).exists():
+        raise HTTPException(status_code=404, detail="Source PDF not available")
+    if Path(pdf_path_str).suffix.lower() != ".pdf":
         raise HTTPException(status_code=404, detail="Source PDF not available")
 
     try:

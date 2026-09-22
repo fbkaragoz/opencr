@@ -104,7 +104,8 @@ class OutputValidator:
         artifact_patterns = [
             r"(<\|det\|>){3,}",  # Repeated detection tokens
             r"(<\|grounding\|>){2,}",  # Repeated grounding tokens
-            r"(\S+\s*){1}\1{10,}",  # Same word 10+ times
+            r"(?iu)\b([^\W_]{2,})(?:\s+\1\b){9,}",  # Same word 10+ times
+            r"(?u)([^\W_\s])\1{39,}",  # Same letter/number 40+ times
         ]
         for pattern in artifact_patterns:
             if re.search(pattern, stripped):

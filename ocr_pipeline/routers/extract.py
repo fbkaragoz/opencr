@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from ocr_pipeline.models.schemas import ExtractRequest, ExtractResponse
 from ocr_pipeline.services.db import get_db
+from ocr_pipeline.services.document_catalog import SUPPORTED_SOURCE_SUFFIXES
 from ocr_pipeline.services.run_orchestrator import get_orchestrator
 from ocr_pipeline.services.startup import model_readiness
 
@@ -20,8 +21,8 @@ async def extract_pdf(request: ExtractRequest):
     pdf_path = Path(request.file_path)
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {request.file_path}")
-    if pdf_path.suffix.lower() != ".pdf":
-        raise HTTPException(status_code=400, detail="File must be a PDF")
+    if pdf_path.suffix.lower() not in SUPPORTED_SOURCE_SUFFIXES:
+        raise HTTPException(status_code=400, detail="File must be a PDF or EPUB")
 
     orchestrator = get_orchestrator()
     result = await orchestrator.create_run(

@@ -81,6 +81,21 @@ class TestModelArtifacts:
         result = validator.validate(text, page_num=1)
         assert result.status == ValidationStatus.FAIL
 
+    def test_repeated_word_fails(self, validator):
+        text = "Normal text before " + "model " * 10 + "normal text after."
+        result = validator.validate(text, page_num=1)
+        assert result.status == ValidationStatus.FAIL
+        assert any("model artifact" in issue for issue in result.issues)
+
+    def test_repeated_punctuation_is_not_model_artifact(self, validator):
+        text = (
+            "Bu alıştırma metninde doldurma boşlukları vardır. "
+            "Cümlede eksik kalan yer . . . . . . . . . . ile gösterilir. "
+            "Başka bir yerde de ----------- işareti bulunur."
+        )
+        result = validator.validate(text, page_num=1)
+        assert not any("model artifact" in issue for issue in result.issues)
+
 
 class TestCorpusQualityFlags:
     def test_line_break_hyphenation_warns_with_machine_flag(self, validator):

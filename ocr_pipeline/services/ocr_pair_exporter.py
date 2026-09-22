@@ -102,7 +102,7 @@ class OCRPairExporter:
             if not pdf_path_str:
                 continue
             pdf_path = Path(pdf_path_str)
-            if not pdf_path.exists():
+            if not pdf_path.exists() or pdf_path.suffix.lower() != ".pdf":
                 continue
 
             total_pages = int(

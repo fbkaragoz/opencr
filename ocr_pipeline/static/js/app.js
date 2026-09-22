@@ -587,8 +587,8 @@ function opencrApp() {
 
     async handleDrop(event) {
       this.dragOver = false;
-      const files = Array.from(event.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-      if (files.length === 0) return this.toast('Only PDF files are accepted', 'error');
+      const files = Array.from(event.dataTransfer.files).filter(f => /\.(pdf|epub)$/i.test(f.name));
+      if (files.length === 0) return this.toast('Only PDF and EPUB files are accepted', 'error');
       await this.uploadFiles(files);
     },
 

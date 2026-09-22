@@ -9,7 +9,11 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from ocr_pipeline.config import settings
 from ocr_pipeline.models.schemas import FileInfo
 from ocr_pipeline.services.db import get_db
-from ocr_pipeline.services.document_catalog import catalog_pdf
+from ocr_pipeline.services.document_catalog import (
+    SUPPORTED_SOURCE_SUFFIXES,
+    catalog_document,
+    is_supported_source,
+)
 
 
 router = APIRouter()
@@ -17,9 +21,9 @@ router = APIRouter()
 
 @router.post("/api/upload")
 async def upload_pdf(file: UploadFile):
-    """Accept a multipart PDF upload and save to input directory."""
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    """Accept a multipart PDF/EPUB upload and save to input directory."""
+    if not file.filename or Path(file.filename).suffix.lower() not in SUPPORTED_SOURCE_SUFFIXES:
+        raise HTTPException(status_code=400, detail="Only PDF and EPUB files are accepted")
 
     safe_name = Path(file.filename).name
     if ".." in safe_name or "/" in safe_name or "\\" in safe_name:
@@ -30,7 +34,7 @@ async def upload_pdf(file: UploadFile):
     digest = hashlib.sha256(content).hexdigest()
     dest = settings.input_dir / f"{digest[:16]}__{safe_name}"
     dest.write_bytes(content)
-    await catalog_pdf(get_db(), dest, filename=safe_name)
+    await catalog_document(get_db(), dest, filename=safe_name)
 
     return {
         "filename": safe_name,
@@ -42,7 +46,7 @@ async def upload_pdf(file: UploadFile):
 
 @router.get("/api/files/input", response_model=list[FileInfo])
 async def list_input_files():
-    """List PDF files in the input directory."""
+    """List supported source files in the input directory."""
     input_dir = settings.input_dir
     if not input_dir.exists():
         return []
@@ -52,7 +56,7 @@ async def list_input_files():
     }
     files = []
     for p in sorted(input_dir.iterdir()):
-        if p.is_file() and p.suffix.lower() == ".pdf":
+        if p.is_file() and is_supported_source(p):
             stat = p.stat()
             document = documents_by_path.get(str(p))
             files.append(
